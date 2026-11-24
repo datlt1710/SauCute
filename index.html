@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Trò Chơi Kiểm Tra Bài Cũ 3D - THPT Tứ Kỳ II</title>
+  <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div class="farm-bg"></div>
+
+  <!-- BƯỚC 1: MÀN HÌNH CHỌN TRÒ CHƠI -->
+  <div class="screen-container" id="gameSelectScreen">
+    <div class="hub-card">
+      <div class="farm-badge">🎓 THPT TỨ KỲ II • KIỂM TRA BÀI CŨ 3D</div>
+      <h1 class="farm-title">Chọn Trò Chơi</h1>
+      <p class="farm-subtitle">Trải nghiệm góc nhìn thứ nhất 3D để gọi tên ngẫu nhiên</p>
+
+      <div class="game-cards-grid">
+        <!-- Card 1: Bắt vịt -->
+        <div class="mode-card" onclick="selectGameMode('duck')">
+          <div class="mode-icon">🦆</div>
+          <h3>Săn Vịt Đồng Cỏ</h3>
+          <p>Chạy đuổi theo đàn vịt trên đồng cỏ 3D và vung vợt bắt lấy mục tiêu.</p>
+          <span class="mode-tag">Hành động • Vui nhộn</span>
+        </div>
+
+        <!-- Card 2: Câu cá -->
+        <div class="mode-card" onclick="selectGameMode('fish')">
+          <div class="mode-icon">🎣</div>
+          <h3>Câu Cá Bến Hồ</h3>
+          <p>Đứng trên cầu gỗ quăng cần câu xuống hồ nước trong vắt và chờ cá cắn câu.</p>
+          <span class="mode-tag">Thư giãn • Hồi hộp</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BƯỚC 2: MÀN HÌNH CHỌN LỚP (ĐỘC LẬP SAU KHI CHỌN GAME) -->
+  <div class="screen-container hidden" id="classSelectScreen">
+    <div class="farm-gate">
+      <button class="btn-back-step" onclick="backToGameSelect()">← Đổi trò chơi</button>
+      <div class="selected-mode-pill" id="selectedModeLabel">🦆 Chế độ: Săn Vịt Đồng Cỏ</div>
+      <h1 class="farm-title">Chọn Lớp Học</h1>
+      <p class="farm-subtitle">Chọn danh sách lớp để bắt đầu lượt gọi tên</p>
+      
+      <div class="class-selector-box">
+        <label for="classDropdown">Danh sách lớp</label>
+        <select id="classDropdown" class="farm-select">
+          <!-- Dynamic options -->
+        </select>
+
+        <div class="action-buttons">
+          <button class="btn btn-farm btn-large" onclick="enterGameWithSelectedClass()">
+            Bắt đầu chơi →
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BƯỚC 3: MÀN HÌNH GAME 3D GÓC NHÌN THỨ NHẤT -->
+  <div class="app-container hidden" id="gameScreen">
+    <div class="viewport-wrapper" id="viewportWrapper">
+      <div id="threeContainer"></div>
+
+      <!-- HUD phía trên -->
+      <header class="hud-top">
+        <div class="hud-left">
+          <button class="btn-glass" onclick="goToClassSelect()">
+            ← Đổi lớp / Game
+          </button>
+          <div class="class-tag">
+            <span class="dot"></span>
+            <span id="currentClassTitle">Lớp 10A9</span>
+          </div>
+        </div>
+
+        <div class="stats-pill">
+          <div class="stat-item">
+            <span class="stat-label">Chưa gọi</span>
+            <strong id="remainingCount">0</strong>
+          </div>
+          <div class="stat-divider"></div>
+          <div class="stat-item">
+            <span class="stat-label">Đã gọi</span>
+            <strong id="calledCount">0</strong>
+          </div>
+        </div>
+
+        <div class="hud-right">
+          <button class="btn-glass" onclick="openClassManager()">
+            📋 Danh sách lớp
+          </button>
+        </div>
+      </header>
+
+      <!-- Thông báo trạng thái câu cá nổi giữa màn hình -->
+      <div class="fishing-banner hidden" id="fishingBanner">🎣 Đang thả câu... Chờ cá cắn phao!</div>
+
+      <!-- Tâm ngắm giữa màn hình -->
+      <div class="crosshair" id="crosshair">
+        <div class="crosshair-ring"></div>
+        <div class="crosshair-dot"></div>
+      </div>
+
+      <!-- Lớp phủ hướng dẫn điều khiển -->
+      <div class="lock-overlay" id="lockOverlay" onclick="startPlaying3D()">
+        <div class="lock-box">
+          <div class="lock-icon" id="lockModeIcon">🥅</div>
+          <h2 id="lockModeTitle">Nhấn vào màn hình để bắt đầu</h2>
+          <div class="controls-grid">
+            <div class="ctrl-key"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>Di chuyển</span></div>
+            <div class="ctrl-key"><kbd>Chuột</kbd><span>Xoay góc nhìn</span></div>
+            <div class="ctrl-key"><kbd>Click trái</kbd> / <kbd>E</kbd><span id="actionHintText">Vung vợt / Quăng cần</span></div>
+            <div class="ctrl-key"><kbd>Space</kbd><span>Nhảy</span></div>
+          </div>
+          <p class="lock-hint">Nhấn phím <strong>ESC</strong> bất cứ lúc nào để hiện lại con trỏ chuột</p>
+        </div>
+      </div>
+
+      <!-- Thanh HUD dưới cùng -->
+      <div class="hud-bottom">
+        <span class="hud-tip" id="hudBottomTip">WASD: Di chuyển • Click chuột trái / E: Thao tác</span>
+        <button class="btn btn-farm btn-small" onclick="quickCatchRandom()">
+          ⚡ Gọi nhanh ngẫu nhiên
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Kết quả gọi tên học sinh -->
+  <div class="modal-overlay" id="resultModal">
+    <div class="modal-card result-card">
+      <div class="modal-badge" id="resultBadge">🎯 ĐÃ BẮT TRÚNG MỤC TIÊU</div>
+      <div class="duck-spotlight" id="resultAvatar">🦆</div>
+      <h2 class="student-name" id="selectedStudentName">Nguyễn Văn A</h2>
+      <p class="modal-subtext">Mời bạn lên bảng kiểm tra bài cũ!</p>
+      <button class="btn btn-farm btn-large" onclick="closeResultModal()">
+        Tiếp tục lượt tiếp theo
+      </button>
+    </div>
+  </div>
+
+  <!-- Modal: Quản lý danh sách học sinh -->
+  <div class="modal-overlay" id="managerModal">
+    <div class="modal-card manager-card">
+      <div class="modal-header">
+        <h3 id="managerModalTitle">Danh sách lớp</h3>
+        <button class="close-btn" onclick="closeClassManager()">&times;</button>
+      </div>
+      
+      <div class="modal-body">
+        <p class="note-text">Mỗi dòng tương ứng với một học sinh. Xóa tên khỏi danh sách sẽ loại bỏ người đó khỏi lượt gọi.</p>
+        <textarea id="studentListInput" rows="10" placeholder="Mỗi học sinh một dòng..."></textarea>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-danger" onclick="resetCalledList()">
+          🔄 Làm mới lượt gọi
+        </button>
+        <button class="btn btn-farm" onclick="saveStudentList()">
+          Lưu thay đổi
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
