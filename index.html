@@ -3,11 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- Chống cache HTML trên mọi trình duyệt -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+
   <title>Trò Chơi Kiểm Tra Bài Cũ 3D - THPT Tứ Kỳ II</title>
   <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600;700;800;900&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-  <link rel="stylesheet" href="style.css">
+
+  <!-- Cách 1: Tự động gắn timestamp mỗi lần mở trang để luôn tải CSS mới nhất từ Git -->
+  <script>
+    window.__APP_BUILD_TS__ = Date.now();
+    document.write('<link rel="stylesheet" href="style.css?v=' + window.__APP_BUILD_TS__ + '">');
+  </script>
 </head>
 <body>
 
@@ -36,11 +46,19 @@
           <p>Đứng trên cầu gỗ quăng cần câu xuống hồ nước trong vắt và chờ cá cắn câu.</p>
           <span class="mode-tag">Thư giãn • Hồi hộp</span>
         </div>
+
+        <!-- Card 3: Vạch lá tìm sâu -->
+        <div class="mode-card mode-card-special" onclick="selectGameMode('worm')">
+          <div class="mode-icon">🌿</div>
+          <h3>Vạch Lá Tìm Sâu</h3>
+          <p>Dạo quanh vườn cây rậm rạp và vạch từng bụi lá để tìm chú sâu đang trốn.</p>
+          <span class="mode-tag">Khám phá • Bất ngờ</span>
+        </div>
       </div>
     </div>
   </div>
 
-  <!-- BƯỚC 2: MÀN HÌNH CHỌN LỚP (ĐỘC LẬP SAU KHI CHỌN GAME) -->
+  <!-- BƯỚC 2: MÀN HÌNH CHỌN LỚP -->
   <div class="screen-container hidden" id="classSelectScreen">
     <div class="farm-gate">
       <button class="btn-back-step" onclick="backToGameSelect()">← Đổi trò chơi</button>
@@ -99,7 +117,7 @@
         </div>
       </header>
 
-      <!-- Thông báo trạng thái câu cá nổi giữa màn hình -->
+      <!-- Thông báo trạng thái động -->
       <div class="fishing-banner hidden" id="fishingBanner">🎣 Đang thả câu... Chờ cá cắn phao!</div>
 
       <!-- Tâm ngắm giữa màn hình -->
@@ -116,7 +134,7 @@
           <div class="controls-grid">
             <div class="ctrl-key"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>Di chuyển</span></div>
             <div class="ctrl-key"><kbd>Chuột</kbd><span>Xoay góc nhìn</span></div>
-            <div class="ctrl-key"><kbd>Click trái</kbd> / <kbd>E</kbd><span id="actionHintText">Vung vợt / Quăng cần</span></div>
+            <div class="ctrl-key"><kbd>Click trái</kbd> / <kbd>E</kbd><span id="actionHintText">Bắt mục tiêu</span></div>
             <div class="ctrl-key"><kbd>Space</kbd><span>Nhảy</span></div>
           </div>
           <p class="lock-hint">Nhấn phím <strong>ESC</strong> bất cứ lúc nào để hiện lại con trỏ chuột</p>
@@ -170,6 +188,9 @@
     </div>
   </div>
 
-  <script src="script.js"></script>
+  <!-- Cách 1: Tự động gắn timestamp mỗi lần mở trang để luôn tải JS mới nhất từ Git -->
+  <script>
+    document.write('<script src="script.js?v=' + window.__APP_BUILD_TS__ + '"><\/script>');
+  </script>
 </body>
 </html>

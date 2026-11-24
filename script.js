@@ -18,17 +18,70 @@ const defaultClassData = {
 
 let allClasses = {};
 let currentClass = "";
-let currentGameMode = "duck"; // 'duck' hoặc 'fish'
+let currentGameMode = "duck"; // 'duck' | 'fish' | 'worm'
 let calledStudentsMap = {};
+let lastFirstCalledMap = {}; // Ghi nhớ người đầu tiên của lần trước để tránh lặp sau khi F5
 let isCatching = false;
+
+// --- BỘ TẠO NGẪU NHIÊN 100% CHUẨN MẬT MÃ (CRYPTO) ---
+function getCryptoRandomInt(max) {
+  if (max <= 1) return 0;
+  if (window.crypto && window.crypto.getRandomValues) {
+    const array = new Uint32Array(1);
+    const limit = Math.floor(0x100000000 / max) * max;
+    let rand;
+    do {
+      window.crypto.getRandomValues(array);
+      rand = array[0];
+    } while (rand >= limit);
+    return rand % max;
+  }
+  return Math.floor(Math.random() * max);
+}
+
+function cryptoShuffle(list) {
+  const arr = [...list];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = getCryptoRandomInt(i + 1);
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+function pickTrulyRandomStudent(className) {
+  const students = allClasses[className] || [];
+  const called = calledStudentsMap[className] || [];
+  const uncalled = students.filter(s => !called.includes(s));
+  if (uncalled.length === 0) return null;
+
+  // Nếu là lượt gọi đầu tiên sau khi tải lại trang / reset, loại trừ người đầu tiên của lần trước
+  let pool = uncalled;
+  const prevFirst = lastFirstCalledMap[className];
+  if (called.length === 0 && prevFirst && uncalled.length > 1) {
+    const filtered = uncalled.filter(s => s !== prevFirst);
+    if (filtered.length > 0) {
+      pool = filtered;
+    }
+  }
+
+  const shuffled = cryptoShuffle(pool);
+  const chosen = shuffled[getCryptoRandomInt(shuffled.length)];
+
+  if (called.length === 0) {
+    lastFirstCalledMap[className] = chosen;
+  }
+  return chosen;
+}
 
 // --- BIẾN THẾ GIỚI 3D ---
 let scene, camera, renderer;
-let worldGroup; // Chứa cảnh vật của chế độ hiện tại
-let netGroup;   // Chiếc vợt 3D nâng cấp
-let rodGroup;   // Cần câu 3D
+let worldGroup;
+let netGroup; // Vợt bắt vịt
+let rodGroup; // Cần câu cá
+let stickGroup; // Gậy gỗ vạch lá
 let ducks3D = [];
 let fishes3D = [];
+let leafBushes3D = []; // Các bụi lá rậm rạp chứa sâu bên trong
 let targetRingMesh;
 let lakeWaterMesh;
 
@@ -87,6 +140,14 @@ function playSound(type) {
     gain.gain.linearRampToValueAtTime(0.01, now + 0.22);
     osc.start(now);
     osc.stop(now + 0.22);
+  } else if (type === 'rustle') {
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(160, now);
+    osc.frequency.linearRampToValueAtTime(95, now + 0.16);
+    gain.gain.setValueAtTime(0.14, now);
+    gain.gain.linearRampToValueAtTime(0.01, now + 0.16);
+    osc.start(now);
+    osc.stop(now + 0.16);
   } else if (type === 'quack') {
     osc.type = 'sawtooth';
     osc.frequency.setValueAtTime(270, now);
@@ -97,6 +158,14 @@ function playSound(type) {
     gain.gain.linearRampToValueAtTime(0.01, now + 0.38);
     osc.start(now);
     osc.stop(now + 0.38);
+  } else if (type === 'worm_catch') {
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(340, now);
+    osc.frequency.exponentialRampToValueAtTime(720, now + 0.18);
+    gain.gain.setValueAtTime(0.28, now);
+    gain.gain.linearRampToValueAtTime(0.01, now + 0.24);
+    osc.start(now);
+    osc.stop(now + 0.24);
   } else if (type === 'splash') {
     osc.type = 'sine';
     osc.frequency.setValueAtTime(420, now);
@@ -127,13 +196,17 @@ window.addEventListener('DOMContentLoaded', () => {
 function loadStorageData() {
   const savedClasses = localStorage.getItem('spooky_classes');
   const savedCalled = localStorage.getItem('spooky_called_map');
+  const savedLastFirst = localStorage.getItem('spooky_last_first_map');
+
   allClasses = savedClasses ? JSON.parse(savedClasses) : { ...defaultClassData };
   calledStudentsMap = savedCalled ? JSON.parse(savedCalled) : {};
+  lastFirstCalledMap = savedLastFirst ? JSON.parse(savedLastFirst) : {};
 }
 
 function saveStorageData() {
   localStorage.setItem('spooky_classes', JSON.stringify(allClasses));
   localStorage.setItem('spooky_called_map', JSON.stringify(calledStudentsMap));
+  localStorage.setItem('spooky_last_first_map', JSON.stringify(lastFirstCalledMap));
 }
 
 // --- BƯỚC 1 -> BƯỚC 2: CHỌN TRÒ CHƠI ---
@@ -145,8 +218,10 @@ function selectGameMode(mode) {
   const pill = document.getElementById('selectedModeLabel');
   if (mode === 'duck') {
     pill.textContent = '🦆 Chế độ: Săn Vịt Đồng Cỏ 3D';
-  } else {
+  } else if (mode === 'fish') {
     pill.textContent = '🎣 Chế độ: Câu Cá Bến Hồ 3D';
+  } else {
+    pill.textContent = '🌿 Chế độ: Vạch Lá Tìm Sâu 3D';
   }
   populateDropdown();
 }
@@ -183,9 +258,9 @@ function enterGameWithSelectedClass() {
   document.getElementById('classSelectScreen').classList.add('hidden');
   document.getElementById('gameScreen').classList.remove('hidden');
 
-  // Cập nhật hướng dẫn HUD theo từng game
   const banner = document.getElementById('fishingBanner');
   banner.classList.add('hidden');
+  banner.classList.remove('bite-alert');
   fishingState = 'idle';
 
   if (currentGameMode === 'duck') {
@@ -194,12 +269,18 @@ function enterGameWithSelectedClass() {
     document.getElementById('actionHintText').textContent = 'Vung vợt bắt vịt';
     document.getElementById('hudBottomTip').textContent = 'Lại gần vịt đến khi hiện vòng sáng dưới chân rồi Click chuột trái để bắt';
     buildDuckFarmScene();
-  } else {
+  } else if (currentGameMode === 'fish') {
     document.getElementById('lockModeIcon').textContent = '🎣';
     document.getElementById('lockModeTitle').textContent = 'Câu Cá Bến Hồ 3D';
     document.getElementById('actionHintText').textContent = 'Quăng câu / Giật cần';
     document.getElementById('hudBottomTip').textContent = 'Hướng ra mặt hồ, Click chuột trái để quăng câu; khi cá cắn phao hãy Click lần nữa để giật cần!';
     buildFishingLakeScene();
+  } else {
+    document.getElementById('lockModeIcon').textContent = '🌿';
+    document.getElementById('lockModeTitle').textContent = 'Vạch Lá Tìm Sâu 3D';
+    document.getElementById('actionHintText').textContent = 'Vạch lá tìm sâu';
+    document.getElementById('hudBottomTip').textContent = 'Lại gần các bụi lá rậm trong vườn, Click chuột trái (hoặc E) để vạch lá tìm sâu trốn bên trong!';
+    buildLeafGardenScene();
   }
 
   requestAnimationFrame(() => {
@@ -228,8 +309,10 @@ function updateCountersAndEntities() {
 
   if (currentGameMode === 'duck') {
     spawn3DDucks(uncalled.length);
-  } else {
+  } else if (currentGameMode === 'fish') {
     spawn3DFishes(uncalled.length);
+  } else {
+    spawnLeafBushesWithWorms(uncalled.length);
   }
 }
 
@@ -252,24 +335,24 @@ function initThreeEngine() {
   worldGroup = new THREE.Group();
   scene.add(worldGroup);
 
-  // Vòng sáng báo hiệu mục tiêu dưới chân vịt
-  const ringGeo = new THREE.RingGeometry(0.65, 0.88, 32);
+  const ringGeo = new THREE.RingGeometry(0.95, 1.25, 32);
   const ringMat = new THREE.MeshBasicMaterial({
     color: 0xfef08a,
     side: THREE.DoubleSide,
     transparent: true,
-    opacity: 0.9
+    opacity: 0.92
   });
   targetRingMesh = new THREE.Mesh(ringGeo, ringMat);
   targetRingMesh.rotation.x = -Math.PI / 2;
   targetRingMesh.visible = false;
   scene.add(targetRingMesh);
 
-  // Tạo sẵn 2 dụng cụ góc nhìn thứ nhất: Vợt đẹp & Cần câu
   buildUpgradedNet();
   buildFishingRod();
+  buildLeafPartingStick();
   camera.add(netGroup);
   camera.add(rodGroup);
+  camera.add(stickGroup);
   scene.add(camera);
 
   window.addEventListener('resize', onWindowResize);
@@ -281,24 +364,19 @@ function clearWorldGroup() {
   }
   ducks3D = [];
   fishes3D = [];
+  leafBushes3D = [];
   targetRingMesh.visible = false;
-  if (bobberMesh) {
-    scene.remove(bobberMesh);
-    bobberMesh = null;
-  }
-  if (fishingLineMesh) {
-    scene.remove(fishingLineMesh);
-    fishingLineMesh = null;
-  }
+  if (bobberMesh) { scene.remove(bobberMesh); bobberMesh = null; }
+  if (fishingLineMesh) { scene.remove(fishingLineMesh); fishingLineMesh = null; }
 }
 
 // --- TEXTURE THỦ CÔNG SẮC NÉT ---
-function createProceduralGrassTexture() {
+function createProceduralGrassTexture(baseHex = '#3b7a33') {
   const canvas = document.createElement('canvas');
   canvas.width = 256;
   canvas.height = 256;
   const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#3b7a33';
+  ctx.fillStyle = baseHex;
   ctx.fillRect(0, 0, 256, 256);
 
   const shades = ['#2f6629', '#488c3f', '#559e4b', '#336e2c', '#63ab54'];
@@ -330,7 +408,7 @@ function createProceduralWoodTexture() {
   return tex;
 }
 
-// --- NÂNG CẤP CHIẾC VỢT BẮT VỊT ĐẸP & CHÂN THỰC HƠN ---
+// --- DỤNG CỤ 1: VỢT BẮT VỊT ---
 function buildUpgradedNet() {
   netGroup = new THREE.Group();
 
@@ -340,104 +418,55 @@ function buildUpgradedNet() {
   const brassMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.82, roughness: 0.22 });
   const rimMat = new THREE.MeshStandardMaterial({ color: 0xd97706, metalness: 0.65, roughness: 0.28 });
 
-  // 1. Tay cầm bọc cao su đen chống trượt ở đuôi cán
   const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.036, 0.04, 0.38, 16), gripMat);
   grip.position.set(0, -0.78, 0);
-  netGroup.add(grip);
-
-  // Nút bịt đồng cuối cán
   const pommel = new THREE.Mesh(new THREE.SphereGeometry(0.042, 16, 12), brassMat);
   pommel.position.set(0, -0.97, 0);
-  netGroup.add(pommel);
-
-  // 2. Thân cán gỗ sồi thon gọn
   const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.035, 1.05, 16), handleMat);
   shaft.position.set(0, -0.08, 0);
-  netGroup.add(shaft);
-
-  // 3. Khớp nối chữ Y bằng đồng thau sang trọng
   const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.036, 0.032, 0.14, 16), brassMat);
   collar.position.set(0, 0.46, 0);
-  netGroup.add(collar);
 
   const forkLeft = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.02, 0.24, 12), brassMat);
-  forkLeft.position.set(-0.08, 0.58, 0.02);
-  forkLeft.rotation.z = 0.38;
-  forkLeft.rotation.x = 0.15;
-
+  forkLeft.position.set(-0.08, 0.58, 0.02); forkLeft.rotation.z = 0.38; forkLeft.rotation.x = 0.15;
   const forkRight = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.02, 0.24, 12), brassMat);
-  forkRight.position.set(0.08, 0.58, 0.02);
-  forkRight.rotation.z = -0.38;
-  forkRight.rotation.x = 0.15;
-  netGroup.add(forkLeft, forkRight);
+  forkRight.position.set(0.08, 0.58, 0.02); forkRight.rotation.z = -0.38; forkRight.rotation.x = 0.15;
 
-  // 4. Vành vợt oval mềm mại
   const rim = new THREE.Mesh(new THREE.TorusGeometry(0.38, 0.022, 16, 40), rimMat);
-  rim.scale.set(0.92, 1.15, 1);
-  rim.position.set(0, 0.98, 0.12);
-  rim.rotation.x = Math.PI / 2.25;
-  netGroup.add(rim);
+  rim.scale.set(0.92, 1.15, 1); rim.position.set(0, 0.98, 0.12); rim.rotation.x = Math.PI / 2.25;
 
-  // 5. Túi lưới 2 lớp: lớp lưới mịn mờ + lớp mắt lưới đan chéo
   const innerBag = new THREE.Mesh(
     new THREE.SphereGeometry(0.37, 24, 16, 0, Math.PI * 2, 0, Math.PI * 0.62),
-    new THREE.MeshStandardMaterial({
-      color: 0xffffff,
-      roughness: 0.9,
-      transparent: true,
-      opacity: 0.26,
-      side: THREE.DoubleSide
-    })
+    new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, transparent: true, opacity: 0.26, side: THREE.DoubleSide })
   );
-  innerBag.scale.set(0.92, 1.45, 1.15);
-  innerBag.position.set(0, 0.96, 0.12);
-  innerBag.rotation.x = Math.PI + Math.PI / 2.25;
-  netGroup.add(innerBag);
+  innerBag.scale.set(0.92, 1.45, 1.15); innerBag.position.set(0, 0.96, 0.12); innerBag.rotation.x = Math.PI + Math.PI / 2.25;
 
   const wireBag = new THREE.Mesh(
     new THREE.SphereGeometry(0.372, 18, 12, 0, Math.PI * 2, 0, Math.PI * 0.62),
-    new THREE.MeshBasicMaterial({
-      color: 0xfef3c7,
-      wireframe: true,
-      transparent: true,
-      opacity: 0.45
-    })
+    new THREE.MeshBasicMaterial({ color: 0xfef3c7, wireframe: true, transparent: true, opacity: 0.45 })
   );
-  wireBag.scale.set(0.92, 1.45, 1.15);
-  wireBag.position.set(0, 0.96, 0.12);
-  wireBag.rotation.x = Math.PI + Math.PI / 2.25;
-  netGroup.add(wireBag);
+  wireBag.scale.set(0.92, 1.45, 1.15); wireBag.position.set(0, 0.96, 0.12); wireBag.rotation.x = Math.PI + Math.PI / 2.25;
 
+  netGroup.add(grip, pommel, shaft, collar, forkLeft, forkRight, rim, innerBag, wireBag);
   netGroup.position.set(0.66, -0.52, -1.05);
   netGroup.rotation.set(0.28, -0.22, 0.2);
 }
 
-// --- TẠO CẦN CÂU 3D GÓC NHÌN THỨ NHẤT ---
+// --- DỤNG CỤ 2: CẦN CÂU ---
 function buildFishingRod() {
   rodGroup = new THREE.Group();
-
   const corkMat = new THREE.MeshStandardMaterial({ color: 0xb45309, roughness: 0.85 });
   const carbonMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.35, metalness: 0.5 });
   const silverMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.85, roughness: 0.2 });
 
-  // Tay cầm bần
   const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.036, 0.45, 14), corkMat);
   grip.position.set(0, -0.45, 0);
-  rodGroup.add(grip);
-
-  // Máy quay cước (Reel)
   const reelBody = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.09, 16), silverMat);
-  reelBody.rotation.z = Math.PI / 2;
-  reelBody.position.set(-0.05, -0.25, -0.04);
-  rodGroup.add(reelBody);
-
-  // Thân cần câu vươn dài
+  reelBody.rotation.z = Math.PI / 2; reelBody.position.set(-0.05, -0.25, -0.04);
   const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.025, 2.2, 12), carbonMat);
-  shaft.position.set(0, 0.75, -0.15);
-  shaft.rotation.x = -0.14;
-  rodGroup.add(shaft);
+  shaft.position.set(0, 0.75, -0.15); shaft.rotation.x = -0.14;
+  rodGroup.add(grip, reelBody, shaft);
 
-  // Các khoen dẫn dây
   [0.2, 0.75, 1.3, 1.82].forEach((h, idx) => {
     const guide = new THREE.Mesh(new THREE.TorusGeometry(0.022 - idx * 0.003, 0.003, 8, 16), silverMat);
     guide.position.set(0, h, -0.07 - h * 0.14);
@@ -449,6 +478,36 @@ function buildFishingRod() {
   rodGroup.visible = false;
 }
 
+// --- DỤNG CỤ 3: GẬY GỖ CHẠC HAI ĐẦU ĐỂ VẠCH LÁ ---
+function buildLeafPartingStick() {
+  stickGroup = new THREE.Group();
+  const woodTex = createProceduralWoodTexture();
+  const woodMat = new THREE.MeshStandardMaterial({ map: woodTex, roughness: 0.65 });
+  const leafAccentMat = new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.7 });
+
+  const mainStick = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.032, 1.35, 14), woodMat);
+  mainStick.position.set(0, 0.05, 0);
+  stickGroup.add(mainStick);
+
+  const branchL = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.022, 0.34, 10), woodMat);
+  branchL.position.set(-0.09, 0.82, 0);
+  branchL.rotation.z = 0.48;
+
+  const branchR = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.022, 0.34, 10), woodMat);
+  branchR.position.set(0.09, 0.82, 0);
+  branchR.rotation.z = -0.48;
+
+  const sprout = new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 8), leafAccentMat);
+  sprout.scale.set(1.6, 0.4, 0.8);
+  sprout.position.set(0.05, 0.38, 0);
+  sprout.rotation.z = 0.5;
+
+  stickGroup.add(branchL, branchR, sprout);
+  stickGroup.position.set(0.62, -0.48, -0.95);
+  stickGroup.rotation.set(0.35, -0.2, 0.18);
+  stickGroup.visible = false;
+}
+
 // =========================================================================
 // CẢNH 1: SĂN VỊT ĐỒNG CỎ 3D
 // =========================================================================
@@ -456,45 +515,39 @@ function buildDuckFarmScene() {
   clearWorldGroup();
   netGroup.visible = true;
   rodGroup.visible = false;
+  stickGroup.visible = false;
 
   scene.background = new THREE.Color(0x93c5fd);
   scene.fog = new THREE.FogExp2(0xbad6eb, 0.011);
 
   currentBounds = { minX: -36, maxX: 36, minZ: -36, maxZ: 36 };
   camera.position.set(0, PLAYER_HEIGHT, 24);
-  yaw = 0;
-  pitch = -0.06;
+  yaw = 0; pitch = -0.06;
 
-  // Ánh sáng
   const hemiLight = new THREE.HemisphereLight(0xdbeafe, 0x365314, 0.75);
   const dirLight = new THREE.DirectionalLight(0xfff3d6, 1.15);
   dirLight.position.set(32, 48, 25);
   dirLight.castShadow = true;
-  dirLight.shadow.mapSize.width = 2048;
-  dirLight.shadow.mapSize.height = 2048;
+  dirLight.shadow.mapSize.width = 2048; dirLight.shadow.mapSize.height = 2048;
   const d = 48;
   dirLight.shadow.camera.left = -d; dirLight.shadow.camera.right = d;
   dirLight.shadow.camera.top = d; dirLight.shadow.camera.bottom = -d;
   worldGroup.add(hemiLight, dirLight);
 
-  // Mặt cỏ
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(140, 140),
     new THREE.MeshStandardMaterial({ map: createProceduralGrassTexture(), roughness: 0.92 })
   );
-  ground.rotation.x = -Math.PI / 2;
-  ground.receiveShadow = true;
+  ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true;
   worldGroup.add(ground);
 
-  // Ao nhỏ + đá cuội
   const pondGroup = new THREE.Group();
   pondGroup.position.set(-16, 0, -12);
   const water = new THREE.Mesh(
     new THREE.CylinderGeometry(6.8, 6.8, 0.12, 28),
     new THREE.MeshStandardMaterial({ color: 0x0ea5e9, roughness: 0.15, metalness: 0.35 })
   );
-  water.scale.set(1.2, 1, 0.85);
-  water.position.y = 0.05;
+  water.scale.set(1.2, 1, 0.85); water.position.y = 0.05;
   pondGroup.add(water);
 
   const rockMat = new THREE.MeshStandardMaterial({ color: 0x78716c, roughness: 0.85 });
@@ -507,27 +560,8 @@ function buildDuckFarmScene() {
   }
   worldGroup.add(pondGroup);
 
-  // Hàng rào gỗ
-  const woodMat = new THREE.MeshStandardMaterial({ map: createProceduralWoodTexture(), roughness: 0.85 });
-  const limit = 37.5;
-  for (let i = -limit; i <= limit; i += 3.2) {
-    [[i, 1.05, -limit], [i, 1.05, limit], [-limit, 1.05, i], [limit, 1.05, i]].forEach(([x, y, z]) => {
-      const post = new THREE.Mesh(new THREE.BoxGeometry(0.38, 2.1, 0.38), woodMat);
-      post.position.set(x, y, z);
-      post.castShadow = true;
-      worldGroup.add(post);
-    });
-  }
-  const barH = new THREE.Mesh(new THREE.BoxGeometry(limit * 2, 0.22, 0.16), woodMat);
-  [1.5, 0.75].forEach(h => {
-    const b1 = barH.clone(); b1.position.set(0, h, -limit);
-    const b2 = barH.clone(); b2.position.set(0, h, limit);
-    const b3 = barH.clone(); b3.rotation.y = Math.PI / 2; b3.position.set(-limit, h, 0);
-    const b4 = barH.clone(); b4.rotation.y = Math.PI / 2; b4.position.set(limit, h, 0);
-    worldGroup.add(b1, b2, b3, b4);
-  });
+  buildFenceBoundary(worldGroup, 37.5);
 
-  // Chuồng trại đỏ & Cây
   const barnGroup = new THREE.Group();
   const wall = new THREE.Mesh(new THREE.BoxGeometry(14, 7.5, 11), new THREE.MeshStandardMaterial({ color: 0x991b1b, roughness: 0.75 }));
   wall.position.y = 3.75; wall.castShadow = true;
@@ -538,6 +572,25 @@ function buildDuckFarmScene() {
   worldGroup.add(barnGroup);
 
   addSurroundingTrees(worldGroup);
+}
+
+function buildFenceBoundary(parentGroup, limit) {
+  const woodMat = new THREE.MeshStandardMaterial({ map: createProceduralWoodTexture(), roughness: 0.85 });
+  for (let i = -limit; i <= limit; i += 3.2) {
+    [[i, 1.05, -limit], [i, 1.05, limit], [-limit, 1.05, i], [limit, 1.05, i]].forEach(([x, y, z]) => {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.38, 2.1, 0.38), woodMat);
+      post.position.set(x, y, z); post.castShadow = true;
+      parentGroup.add(post);
+    });
+  }
+  const barH = new THREE.Mesh(new THREE.BoxGeometry(limit * 2, 0.22, 0.16), woodMat);
+  [1.5, 0.75].forEach(h => {
+    const b1 = barH.clone(); b1.position.set(0, h, -limit);
+    const b2 = barH.clone(); b2.position.set(0, h, limit);
+    const b3 = barH.clone(); b3.rotation.y = Math.PI / 2; b3.position.set(-limit, h, 0);
+    const b4 = barH.clone(); b4.rotation.y = Math.PI / 2; b4.position.set(limit, h, 0);
+    parentGroup.add(b1, b2, b3, b4);
+  });
 }
 
 function addSurroundingTrees(parentGroup) {
@@ -623,80 +676,61 @@ function spawn3DDucks(count) {
 }
 
 // =========================================================================
-// CẢNH 2: CÂU CÁ BẾN HỒ 3D GÓC NHÌN THỨ NHẤT
+// CẢNH 2: CÂU CÁ BẾN HỒ 3D
 // =========================================================================
 function buildFishingLakeScene() {
   clearWorldGroup();
   netGroup.visible = false;
   rodGroup.visible = true;
+  stickGroup.visible = false;
 
   scene.background = new THREE.Color(0x7dd3fc);
   scene.fog = new THREE.FogExp2(0xbae6fd, 0.009);
 
-  // Giới hạn đi lại trên bờ cỏ & cầu gỗ bến tàu
   currentBounds = { minX: -24, maxX: 24, minZ: 4, maxZ: 28 };
   camera.position.set(0, PLAYER_HEIGHT, 8);
-  yaw = 0;
-  pitch = -0.22;
+  yaw = 0; pitch = -0.22;
 
   const hemiLight = new THREE.HemisphereLight(0xe0f2fe, 0x1e3a8a, 0.85);
   const dirLight = new THREE.DirectionalLight(0xfffbeb, 1.15);
-  dirLight.position.set(25, 45, 30);
-  dirLight.castShadow = true;
+  dirLight.position.set(25, 45, 30); dirLight.castShadow = true;
   worldGroup.add(hemiLight, dirLight);
 
-  // Bờ cỏ phía sau người chơi (z >= 9)
   const grassTex = createProceduralGrassTexture();
   grassTex.repeat.set(16, 8);
   const shore = new THREE.Mesh(
     new THREE.BoxGeometry(120, 1.4, 45),
     new THREE.MeshStandardMaterial({ map: grassTex, roughness: 0.9 })
   );
-  shore.position.set(0, -0.5, 31);
-  shore.receiveShadow = true;
+  shore.position.set(0, -0.5, 31); shore.receiveShadow = true;
   worldGroup.add(shore);
 
-  // Đáy hồ cát vàng bên dưới nước
   const lakeBed = new THREE.Mesh(
     new THREE.PlaneGeometry(130, 110),
     new THREE.MeshStandardMaterial({ color: 0xd6c79c, roughness: 0.95 })
   );
-  lakeBed.rotation.x = -Math.PI / 2;
-  lakeBed.position.set(0, -2.2, -30);
+  lakeBed.rotation.x = -Math.PI / 2; lakeBed.position.set(0, -2.2, -30);
   worldGroup.add(lakeBed);
 
-  // Mặt hồ nước trong suốt nhìn xuyên thấy cá bơi bên dưới
   lakeWaterMesh = new THREE.Mesh(
     new THREE.PlaneGeometry(130, 110),
-    new THREE.MeshStandardMaterial({
-      color: 0x0284c7,
-      roughness: 0.12,
-      metalness: 0.25,
-      transparent: true,
-      opacity: 0.58
-    })
+    new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.12, metalness: 0.25, transparent: true, opacity: 0.58 })
   );
-  lakeWaterMesh.rotation.x = -Math.PI / 2;
-  lakeWaterMesh.position.set(0, -0.05, -30);
+  lakeWaterMesh.rotation.x = -Math.PI / 2; lakeWaterMesh.position.set(0, -0.05, -30);
   worldGroup.add(lakeWaterMesh);
 
-  // Cầu gỗ bến tàu vươn ra mặt hồ (z từ 2 đến 11)
   const woodMat = new THREE.MeshStandardMaterial({ map: createProceduralWoodTexture(), roughness: 0.8 });
   for (let z = 2; z <= 11; z += 0.95) {
     const plank = new THREE.Mesh(new THREE.BoxGeometry(5.2, 0.22, 0.85), woodMat);
-    plank.position.set(0, 0.25, z);
-    plank.castShadow = true;
-    plank.receiveShadow = true;
+    plank.position.set(0, 0.25, z); plank.castShadow = true; plank.receiveShadow = true;
     worldGroup.add(plank);
   }
-  // Cọc gỗ 2 bên cầu
   [[-2.4, 2.2], [2.4, 2.2], [-2.4, 6.5], [2.4, 6.5], [-2.4, 10.5], [2.4, 10.5]].forEach(([px, pz]) => {
     const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.2, 2.2, 10), woodMat);
     pillar.position.set(px, 0.3, pz);
     worldGroup.add(pillar);
   });
 
-  // Đá tảng & cây thông bên bờ đối diện
   const rockMat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.85 });
   for (let i = -35; i <= 35; i += 6) {
     const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(1.4 + Math.random(), 0), rockMat);
@@ -704,7 +738,6 @@ function buildFishingLakeScene() {
     worldGroup.add(rock);
   }
 
-  // Bờ bên kia hồ (z = -55)
   const farShore = new THREE.Mesh(
     new THREE.BoxGeometry(140, 4, 30),
     new THREE.MeshStandardMaterial({ color: 0x2d6a3e, roughness: 0.9 })
@@ -737,18 +770,13 @@ function spawn3DFishes(count) {
 
   for (let i = 0; i < count; i++) {
     const { mesh, tail } = createMinecraftFishMesh();
-    const x = (Math.random() - 0.5) * 44;
-    const z = -3 - Math.random() * 28; // Bơi dưới hồ nước (z < 0)
-    const y = -0.6 - Math.random() * 1.1;
-    mesh.position.set(x, y, z);
-
+    mesh.position.set((Math.random() - 0.5) * 44, -0.6 - Math.random() * 1.1, -3 - Math.random() * 28);
     const angle = Math.random() * Math.PI * 2;
     const speed = 2.5 + Math.random() * 2.5;
 
     worldGroup.add(mesh);
     fishes3D.push({
-      mesh,
-      tail,
+      mesh, tail,
       vx: Math.sin(angle) * speed,
       vz: Math.cos(angle) * speed,
       speed,
@@ -758,10 +786,8 @@ function spawn3DFishes(count) {
   }
 }
 
-// Quăng câu / Giật cần
 function handleFishingAction() {
   if (isCatching) return;
-
   const students = allClasses[currentClass] || [];
   const called = calledStudentsMap[currentClass] || [];
   const uncalled = students.filter(s => !called.includes(s));
@@ -774,20 +800,16 @@ function handleFishingAction() {
   const banner = document.getElementById('fishingBanner');
 
   if (fishingState === 'idle') {
-    // 1. Quăng phao xuống mặt hồ phía trước
-    isSwinging = true;
-    swingProgress = 0;
+    isSwinging = true; swingProgress = 0;
     playSound('splash');
 
     const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
     let targetX = camera.position.x + forward.x * 11;
     let targetZ = camera.position.z + forward.z * 11;
-    // Đảm bảo phao rơi xuống vùng nước (z <= 1)
     if (targetZ > 1) targetZ = -6;
     targetX = Math.max(-24, Math.min(24, targetX));
     targetZ = Math.max(-32, Math.min(1, targetZ));
 
-    // Tạo phao câu đỏ trắng
     bobberMesh = new THREE.Group();
     const topBob = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 12), new THREE.MeshStandardMaterial({ color: 0xef4444 }));
     topBob.position.y = 0.08;
@@ -797,29 +819,23 @@ function handleFishingAction() {
     bobberMesh.position.set(targetX, -0.02, targetZ);
     scene.add(bobberMesh);
 
-    // Tạo dây câu nối từ đầu cần tới phao
     const lineGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
     fishingLineMesh = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: 0xffffff }));
     scene.add(fishingLineMesh);
 
     fishingState = 'casted';
-    biteTimer = 1.6 + Math.random() * 1.8; // Cá cắn câu sau 1.6 - 3.4 giây
+    biteTimer = 1.6 + Math.random() * 1.8;
     banner.textContent = '🎣 Đang thả câu... Chờ cá bơi lại cắn phao!';
     banner.classList.remove('hidden', 'bite-alert');
-
   } else if (fishingState === 'casted') {
-    // Giật sớm khi cá chưa cắn -> Thu cần
     cancelFishing();
     banner.textContent = '💨 Giật hơi sớm rồi! Click chuột trái để thả câu lại.';
     setTimeout(() => { if (fishingState === 'idle') banner.classList.add('hidden'); }, 1800);
-
   } else if (fishingState === 'biting') {
-    // 2. Giật cần đúng lúc cá đang cắn -> Bắt trúng!
-    isSwinging = true;
-    swingProgress = 0;
+    isSwinging = true; swingProgress = 0;
     banner.classList.add('hidden');
     cancelFishing();
-    triggerCatchStudent(0, 'fish');
+    triggerCatchStudent('fish');
   }
 }
 
@@ -828,6 +844,274 @@ function cancelFishing() {
   bitingFishObj = null;
   if (bobberMesh) { scene.remove(bobberMesh); bobberMesh = null; }
   if (fishingLineMesh) { scene.remove(fishingLineMesh); fishingLineMesh = null; }
+}
+
+// =========================================================================
+// CẢNH 3: VẠCH LÁ TÌM SÂU 3D
+// =========================================================================
+function buildLeafGardenScene() {
+  clearWorldGroup();
+  netGroup.visible = false;
+  rodGroup.visible = false;
+  stickGroup.visible = true;
+
+  scene.background = new THREE.Color(0xbae6fd);
+  scene.fog = new THREE.FogExp2(0xd9f99d, 0.01);
+
+  currentBounds = { minX: -34, maxX: 34, minZ: -34, maxZ: 34 };
+  camera.position.set(0, PLAYER_HEIGHT, 24);
+  yaw = 0; pitch = -0.16;
+
+  const hemiLight = new THREE.HemisphereLight(0xfef9c3, 0x365314, 0.85);
+  const dirLight = new THREE.DirectionalLight(0xfffbeb, 1.15);
+  dirLight.position.set(28, 45, 22);
+  dirLight.castShadow = true;
+  dirLight.shadow.mapSize.width = 2048; dirLight.shadow.mapSize.height = 2048;
+  const d = 45;
+  dirLight.shadow.camera.left = -d; dirLight.shadow.camera.right = d;
+  dirLight.shadow.camera.top = d; dirLight.shadow.camera.bottom = -d;
+  worldGroup.add(hemiLight, dirLight);
+
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(140, 140),
+    new THREE.MeshStandardMaterial({ map: createProceduralGrassTexture('#3f7d36'), roughness: 0.92 })
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
+  worldGroup.add(ground);
+
+  buildFenceBoundary(worldGroup, 35.5);
+
+  const trunkMat = new THREE.MeshStandardMaterial({ color: 0x6e472b, roughness: 0.9 });
+  const treeLeafMat = new THREE.MeshStandardMaterial({ color: 0x15803d, roughness: 0.85 });
+  const appleMat = new THREE.MeshStandardMaterial({ color: 0xef4444, roughness: 0.35 });
+
+  [[-22, -22], [22, -20], [-24, 16], [24, 15], [0, -28]].forEach(([tx, tz]) => {
+    const tree = new THREE.Group();
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.75, 4.2, 10), trunkMat);
+    trunk.position.y = 2.1; trunk.castShadow = true;
+    const crown = new THREE.Mesh(new THREE.DodecahedronGeometry(3.2, 1), treeLeafMat);
+    crown.position.y = 5.4; crown.castShadow = true;
+    tree.add(trunk, crown);
+
+    for (let a = 0; a < 5; a++) {
+      const ang = (a / 5) * Math.PI * 2;
+      const apple = new THREE.Mesh(new THREE.SphereGeometry(0.28, 10, 10), appleMat);
+      apple.position.set(Math.cos(ang) * 2.5, 4.8 + (a % 2) * 0.7, Math.sin(ang) * 2.5);
+      tree.add(apple);
+    }
+    tree.position.set(tx, 0, tz);
+    worldGroup.add(tree);
+  });
+}
+
+function createHiddenWormMesh() {
+  const worm = new THREE.Group();
+  const bodyMat = new THREE.MeshStandardMaterial({ color: 0xa3e635, roughness: 0.5 });
+  const stripeMat = new THREE.MeshStandardMaterial({ color: 0x4d7c0f, roughness: 0.55 });
+  const eyeWhite = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const eyeBlack = new THREE.MeshBasicMaterial({ color: 0x0f172a });
+
+  const segments = [];
+  for (let i = 0; i < 5; i++) {
+    const radius = i === 0 ? 0.34 : 0.29 - i * 0.025;
+    const seg = new THREE.Mesh(
+      new THREE.SphereGeometry(radius, 12, 10),
+      i % 2 === 0 ? bodyMat : stripeMat
+    );
+    seg.position.set(0, radius, -i * 0.38);
+    worm.add(seg);
+    segments.push(seg);
+  }
+
+  const head = segments[0];
+  [-0.13, 0.13].forEach(side => {
+    const ew = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 8), eyeWhite);
+    ew.position.set(side, 0.1, 0.28);
+    const eb = new THREE.Mesh(new THREE.SphereGeometry(0.055, 8, 8), eyeBlack);
+    eb.position.set(side * 1.05, 0.11, 0.33);
+    head.add(ew, eb);
+  });
+
+  worm.visible = false;
+  return { wormMesh: worm, segments };
+}
+
+function createLeafBush(hasWorm) {
+  const bushGroup = new THREE.Group();
+
+  const leafColors = [0x16a34a, 0x22c55e, 0x15803d, 0x4ade80];
+  const outerLeaves = [];
+  const innerLeaves = [];
+
+  for (let i = 0; i < 6; i++) {
+    const ang = (i / 6) * Math.PI * 2;
+    const mat = new THREE.MeshStandardMaterial({
+      color: leafColors[i % leafColors.length],
+      roughness: 0.72
+    });
+    const leaf = new THREE.Mesh(new THREE.DodecahedronGeometry(0.75, 1), mat);
+    leaf.scale.set(1.35, 0.65, 1.05);
+    const bx = Math.cos(ang) * 0.72;
+    const bz = Math.sin(ang) * 0.72;
+    leaf.position.set(bx, 0.55, bz);
+    leaf.rotation.y = -ang;
+    leaf.castShadow = true;
+    leaf.receiveShadow = true;
+    bushGroup.add(leaf);
+    outerLeaves.push({ mesh: leaf, baseX: bx, baseZ: bz, dirX: Math.cos(ang), dirZ: Math.sin(ang) });
+  }
+
+  for (let j = 0; j < 4; j++) {
+    const ang = (j / 4) * Math.PI * 2 + 0.4;
+    const mat = new THREE.MeshStandardMaterial({
+      color: leafColors[(j + 1) % leafColors.length],
+      roughness: 0.68
+    });
+    const leaf = new THREE.Mesh(new THREE.DodecahedronGeometry(0.68, 1), mat);
+    leaf.scale.set(1.2, 0.85, 1.2);
+    const bx = Math.cos(ang) * 0.34;
+    const bz = Math.sin(ang) * 0.34;
+    leaf.position.set(bx, 0.78, bz);
+    leaf.castShadow = true;
+    bushGroup.add(leaf);
+    innerLeaves.push({ mesh: leaf, baseX: bx, baseZ: bz, dirX: Math.cos(ang), dirZ: Math.sin(ang) });
+  }
+
+  let wormData = null;
+  if (hasWorm) {
+    wormData = createHiddenWormMesh();
+    wormData.wormMesh.position.set(0, 0.05, 0.25);
+    bushGroup.add(wormData.wormMesh);
+  }
+
+  return {
+    mesh: bushGroup,
+    hasWorm,
+    wormData,
+    outerLeaves,
+    innerLeaves,
+    partStage: 0,
+    rustleTimer: 0
+  };
+}
+
+function spawnLeafBushesWithWorms(uncalledCount) {
+  leafBushes3D.forEach(b => worldGroup.remove(b.mesh));
+  leafBushes3D = [];
+
+  if (uncalledCount <= 0) return;
+
+  const wormBushCount = Math.min(uncalledCount, 14);
+  const emptyBushCount = Math.max(6, Math.floor(wormBushCount * 0.9));
+  const totalBushes = wormBushCount + emptyBushCount;
+
+  let flags = [];
+  for (let i = 0; i < wormBushCount; i++) flags.push(true);
+  for (let i = 0; i < emptyBushCount; i++) flags.push(false);
+  flags = cryptoShuffle(flags);
+
+  const placedCoords = [];
+  for (let i = 0; i < totalBushes; i++) {
+    let bx = 0, bz = 0, attempts = 0;
+    do {
+      bx = (Math.random() - 0.5) * 56;
+      bz = (Math.random() - 0.5) * 56;
+      attempts++;
+    } while (
+      attempts < 30 &&
+      (Math.hypot(bx - 0, bz - 24) < 5 || placedCoords.some(([px, pz]) => Math.hypot(bx - px, bz - pz) < 3.6))
+    );
+
+    placedCoords.push([bx, bz]);
+    const bushObj = createLeafBush(flags[i]);
+    bushObj.mesh.position.set(bx, 0, bz);
+    worldGroup.add(bushObj.mesh);
+    leafBushes3D.push(bushObj);
+  }
+}
+
+function findLeafBushInReach() {
+  const playerPos = camera.position.clone();
+  const forward = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+
+  let hitIdx = -1;
+  let closestDist = 5.8;
+
+  leafBushes3D.forEach((b, idx) => {
+    const toBush = new THREE.Vector3().subVectors(b.mesh.position, playerPos);
+    toBush.y = 0;
+    const dist = toBush.length();
+    if (dist < closestDist) {
+      toBush.normalize();
+      if (forward.dot(toBush) > 0.38) {
+        closestDist = dist;
+        hitIdx = idx;
+      }
+    }
+  });
+  return hitIdx;
+}
+
+function partLeavesAction() {
+  if (isSwinging || isCatching || leafBushes3D.length === 0) return;
+  isSwinging = true;
+  swingProgress = 0;
+
+  const hitIdx = findLeafBushInReach();
+  if (hitIdx === -1) {
+    playSound('swing');
+    return;
+  }
+
+  const bush = leafBushes3D[hitIdx];
+  const banner = document.getElementById('fishingBanner');
+  playSound('rustle');
+  bush.rustleTimer = 0.45;
+
+  if (bush.partStage === 0) {
+    bush.partStage = 1;
+    bush.outerLeaves.forEach(l => {
+      l.mesh.position.x = l.baseX + l.dirX * 0.65;
+      l.mesh.position.z = l.baseZ + l.dirZ * 0.65;
+      l.mesh.position.y = 0.35;
+    });
+
+    banner.textContent = '🌿 Đã vạch lớp lá ngoài... Click lần nữa để vạch sâu vào trong!';
+    banner.classList.remove('hidden', 'bite-alert');
+    setTimeout(() => {
+      if (currentGameMode === 'worm' && !isCatching) banner.classList.add('hidden');
+    }, 1800);
+  } else {
+    bush.partStage = 2;
+    bush.innerLeaves.forEach(l => {
+      l.mesh.position.x = l.baseX + l.dirX * 0.85;
+      l.mesh.position.z = l.baseZ + l.dirZ * 0.85;
+      l.mesh.position.y = 0.25;
+      l.mesh.scale.set(0.85, 0.5, 0.85);
+    });
+
+    if (bush.hasWorm && bush.wormData) {
+      bush.wormData.wormMesh.visible = true;
+      bush.wormData.wormMesh.position.y = 0.45;
+      bush.wormData.wormMesh.scale.set(1.35, 1.35, 1.35);
+      banner.textContent = '🐛 A! Bắt gặp chú sâu đang trốn trong bụi lá rồi!';
+      banner.classList.remove('hidden');
+      banner.classList.add('bite-alert');
+
+      setTimeout(() => {
+        banner.classList.add('hidden');
+        banner.classList.remove('bite-alert');
+        triggerCatchStudent('worm');
+      }, 450);
+    } else {
+      banner.textContent = '🍃 Bụi lá này trống trơn, hãy tìm bụi lá khác nhé!';
+      banner.classList.remove('hidden', 'bite-alert');
+      setTimeout(() => {
+        if (currentGameMode === 'worm' && !isCatching) banner.classList.add('hidden');
+      }, 1800);
+    }
+  }
 }
 
 // --- ĐIỀU KHIỂN CHUNG (WASD + CHUỘT) ---
@@ -924,12 +1208,13 @@ function setupFPSControls() {
 function performPrimaryAction() {
   if (currentGameMode === 'duck') {
     swingNetAndCatch();
-  } else {
+  } else if (currentGameMode === 'fish') {
     handleFishingAction();
+  } else {
+    partLeavesAction();
   }
 }
 
-// --- LOGIC BẮT VỊT ---
 function findDuckInReach() {
   const playerPos = camera.position.clone();
   const forward = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
@@ -960,7 +1245,11 @@ function swingNetAndCatch() {
 
   const hitDuckIndex = findDuckInReach();
   if (hitDuckIndex !== -1) {
-    triggerCatchStudent(hitDuckIndex, 'duck');
+    if (ducks3D[hitDuckIndex]) {
+      ducks3D[hitDuckIndex].mesh.position.y = 1.6;
+      ducks3D[hitDuckIndex].mesh.scale.set(1.35, 1.35, 1.35);
+    }
+    triggerCatchStudent('duck');
   }
 }
 
@@ -975,35 +1264,28 @@ function quickCatchRandom() {
   }
   cancelFishing();
   document.getElementById('fishingBanner').classList.add('hidden');
-  triggerCatchStudent(0, currentGameMode);
+  triggerCatchStudent(currentGameMode);
 }
 
-function triggerCatchStudent(entityIndex, mode) {
-  const students = allClasses[currentClass] || [];
-  const called = calledStudentsMap[currentClass] || [];
-  const uncalled = students.filter(s => !called.includes(s));
-  if (uncalled.length === 0) return;
+function triggerCatchStudent(mode) {
+  const chosenStudent = pickTrulyRandomStudent(currentClass);
+  if (!chosenStudent) return;
 
   isCatching = true;
   isPlayingActive = false;
-  playSound('quack');
 
-  const randomStudent = uncalled[Math.floor(Math.random() * uncalled.length)];
-
-  if (mode === 'duck' && ducks3D[entityIndex]) {
-    ducks3D[entityIndex].mesh.position.y = 1.6;
-    ducks3D[entityIndex].mesh.scale.set(1.35, 1.35, 1.35);
-  }
+  if (mode === 'worm') playSound('worm_catch');
+  else playSound('quack');
 
   setTimeout(() => {
-    calledStudentsMap[currentClass].push(randomStudent);
+    calledStudentsMap[currentClass].push(chosenStudent);
     saveStorageData();
     exitPointerLock();
-    showResultModal(randomStudent, mode);
+    showResultModal(chosenStudent, mode);
 
     isCatching = false;
     updateCountersAndEntities();
-  }, 260);
+  }, 240);
 }
 
 // --- VÒNG LẶP GAME 3D ---
@@ -1022,8 +1304,11 @@ function startGameLoop() {
     if (currentGameMode === 'duck') {
       updateDucksAI(dt);
       updateTargetHighlight();
-    } else {
+    } else if (currentGameMode === 'fish') {
       updateFishesAndBobberAI(dt);
+    } else {
+      updateLeafBushesAnimation(dt);
+      updateTargetHighlight();
     }
 
     updateToolAnimation(dt);
@@ -1034,23 +1319,58 @@ function startGameLoop() {
 
 function updateTargetHighlight() {
   const crosshair = document.getElementById('crosshair');
-  if (!isPlayingActive || isCatching || ducks3D.length === 0) {
+  if (!isPlayingActive || isCatching) {
     targetRingMesh.visible = false;
     crosshair.classList.remove('in-range');
     return;
   }
 
-  const idx = findDuckInReach();
-  if (idx !== -1) {
-    const d = ducks3D[idx];
-    targetRingMesh.visible = true;
-    targetRingMesh.position.set(d.mesh.position.x, 0.04, d.mesh.position.z);
-    targetRingMesh.rotation.z += 0.04;
-    crosshair.classList.add('in-range');
-  } else {
-    targetRingMesh.visible = false;
-    crosshair.classList.remove('in-range');
+  if (currentGameMode === 'duck' && ducks3D.length > 0) {
+    const idx = findDuckInReach();
+    if (idx !== -1) {
+      const d = ducks3D[idx];
+      targetRingMesh.visible = true;
+      targetRingMesh.position.set(d.mesh.position.x, 0.04, d.mesh.position.z);
+      targetRingMesh.rotation.z += 0.04;
+      crosshair.classList.add('in-range');
+      return;
+    }
+  } else if (currentGameMode === 'worm' && leafBushes3D.length > 0) {
+    const idx = findLeafBushInReach();
+    if (idx !== -1) {
+      const b = leafBushes3D[idx];
+      targetRingMesh.visible = true;
+      targetRingMesh.position.set(b.mesh.position.x, 0.04, b.mesh.position.z);
+      targetRingMesh.rotation.z += 0.04;
+      crosshair.classList.add('in-range');
+      return;
+    }
   }
+
+  targetRingMesh.visible = false;
+  crosshair.classList.remove('in-range');
+}
+
+function updateLeafBushesAnimation(dt) {
+  const t = performance.now() * 0.004;
+  leafBushes3D.forEach((b, idx) => {
+    if (b.rustleTimer > 0) {
+      b.rustleTimer -= dt;
+      b.mesh.rotation.z = Math.sin(performance.now() * 0.06) * 0.12;
+    } else {
+      if (b.hasWorm && b.partStage < 2) {
+        b.mesh.rotation.z = Math.sin(t + idx * 1.7) * 0.028;
+      } else {
+        b.mesh.rotation.z = 0;
+      }
+    }
+
+    if (b.hasWorm && b.wormData && b.wormData.wormMesh.visible) {
+      b.wormData.segments.forEach((seg, sIdx) => {
+        seg.position.x = Math.sin(performance.now() * 0.015 - sIdx * 0.7) * 0.09;
+      });
+    }
+  });
 }
 
 function updatePlayerMovement(dt) {
@@ -1134,11 +1454,8 @@ function updateDucksAI(dt) {
 function updateFishesAndBobberAI(dt) {
   const banner = document.getElementById('fishingBanner');
 
-  // Cập nhật đàn cá bơi dưới hồ
   fishes3D.forEach(f => {
     f.changeTimer -= dt;
-
-    // Nếu đang thả phao, 1 con cá sẽ bơi hướng về phía phao
     if (fishingState !== 'idle' && bobberMesh && f === bitingFishObj) {
       const dx = bobberMesh.position.x - f.mesh.position.x;
       const dz = bobberMesh.position.z - f.mesh.position.z;
@@ -1147,8 +1464,7 @@ function updateFishesAndBobberAI(dt) {
         f.vx = (dx / dist) * 5.0;
         f.vz = (dz / dist) * 5.0;
       } else {
-        f.vx *= 0.9;
-        f.vz *= 0.9;
+        f.vx *= 0.9; f.vz *= 0.9;
       }
     } else if (f.changeTimer <= 0) {
       const a = Math.random() * Math.PI * 2;
@@ -1170,14 +1486,13 @@ function updateFishesAndBobberAI(dt) {
     f.tail.rotation.y = Math.sin(f.swimPhase) * 0.45;
   });
 
-  // Cập nhật phao câu & dây câu
   if (fishingState !== 'idle' && bobberMesh) {
     if (fishingState === 'casted') {
       biteTimer -= dt;
       bobberMesh.position.y = -0.02 + Math.sin(performance.now() * 0.005) * 0.04;
 
       if (!bitingFishObj && fishes3D.length > 0) {
-        bitingFishObj = fishes3D[Math.floor(Math.random() * fishes3D.length)];
+        bitingFishObj = fishes3D[getCryptoRandomInt(fishes3D.length)];
       }
 
       if (biteTimer <= 0) {
@@ -1187,11 +1502,9 @@ function updateFishesAndBobberAI(dt) {
         banner.classList.add('bite-alert');
       }
     } else if (fishingState === 'biting') {
-      // Phao giật mạnh lên xuống dưới mặt nước
       bobberMesh.position.y = -0.18 + Math.sin(performance.now() * 0.03) * 0.14;
     }
 
-    // Nối dây câu từ đầu cần câu tới phao
     if (fishingLineMesh) {
       const tipLocal = new THREE.Vector3(0, 1.85, -0.45);
       const tipWorld = tipLocal.applyMatrix4(rodGroup.matrixWorld);
@@ -1225,6 +1538,17 @@ function updateToolAnimation(dt) {
       rodGroup.position.set(0.58 + bobX, -0.45 + bobY, -0.95);
       rodGroup.rotation.set(0.55, -0.15, 0.12);
     }
+  } else if (currentGameMode === 'worm' && stickGroup) {
+    if (isSwinging) {
+      swingProgress += dt * 5.8;
+      if (swingProgress >= 1) { isSwinging = false; swingProgress = 0; }
+      const c = Math.sin(swingProgress * Math.PI);
+      stickGroup.position.set(0.62 - c * 0.55, -0.48 - c * 0.1, -0.95 - c * 0.4);
+      stickGroup.rotation.set(0.35 - c * 0.65, -0.2 + c * 0.9, 0.18 + c * 0.6);
+    } else {
+      stickGroup.position.set(0.62 + bobX, -0.48 + bobY, -0.95);
+      stickGroup.rotation.set(0.35, -0.2, 0.18);
+    }
   }
 }
 
@@ -1246,15 +1570,18 @@ function showResultModal(name, mode) {
   if (mode === 'duck') {
     document.getElementById('resultBadge').textContent = '🎯 ĐÃ BẮT TRÚNG MỤC TIÊU';
     document.getElementById('resultAvatar').textContent = '🦆';
-  } else {
+  } else if (mode === 'fish') {
     document.getElementById('resultBadge').textContent = '🎣 CÂU ĐƯỢC CÁ LỚN';
     document.getElementById('resultAvatar').textContent = '🐟';
+  } else {
+    document.getElementById('resultBadge').textContent = '🐛 ĐÃ TÌM THẤY SÂU TRONG BỤI LÁ';
+    document.getElementById('resultAvatar').textContent = '🐛';
   }
 
   document.getElementById('resultModal').classList.add('active');
 
   if (typeof confetti === 'function') {
-    confetti({ particleCount: 80, spread: 75, colors: ['#f59e0b', '#10b981', '#38bdf8', '#ffffff'] });
+    confetti({ particleCount: 80, spread: 75, colors: ['#4ade80', '#f59e0b', '#38bdf8', '#ffffff'] });
   }
 }
 
