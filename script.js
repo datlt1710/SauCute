@@ -54,7 +54,6 @@ function pickTrulyRandomStudent(className) {
   const uncalled = students.filter(s => !called.includes(s));
   if (uncalled.length === 0) return null;
 
-  // Nếu là lượt gọi đầu tiên sau khi tải lại trang / reset, loại trừ người đầu tiên của lần trước
   let pool = uncalled;
   const prevFirst = lastFirstCalledMap[className];
   if (called.length === 0 && prevFirst && uncalled.length > 1) {
@@ -81,7 +80,7 @@ let rodGroup; // Cần câu cá
 let stickGroup; // Gậy gỗ vạch lá
 let ducks3D = [];
 let fishes3D = [];
-let leafBushes3D = []; // Các bụi lá rậm rạp chứa sâu bên trong
+let leafBushes3D = [];
 let targetRingMesh;
 let lakeWaterMesh;
 
@@ -254,9 +253,12 @@ function enterGameWithSelectedClass() {
     calledStudentsMap[currentClass] = [];
   }
 
+  isCatching = false;
+  isSwinging = false;
   document.getElementById('currentClassTitle').textContent = `Lớp ${currentClass}`;
   document.getElementById('classSelectScreen').classList.add('hidden');
   document.getElementById('gameScreen').classList.remove('hidden');
+  document.getElementById('lockOverlay').classList.remove('hidden');
 
   const banner = document.getElementById('fishingBanner');
   banner.classList.add('hidden');
@@ -279,7 +281,7 @@ function enterGameWithSelectedClass() {
     document.getElementById('lockModeIcon').textContent = '🌿';
     document.getElementById('lockModeTitle').textContent = 'Vạch Lá Tìm Sâu 3D';
     document.getElementById('actionHintText').textContent = 'Vạch lá tìm sâu';
-    document.getElementById('hudBottomTip').textContent = 'Lại gần các bụi lá rậm trong vườn, Click chuột trái (hoặc E) để vạch lá tìm sâu trốn bên trong!';
+    document.getElementById('hudBottomTip').textContent = 'Lại gần bụi lá (hiện vòng sáng vàng), Click chuột trái 2 lần để vạch lá tìm sâu bên trong!';
     buildLeafGardenScene();
   }
 
@@ -292,6 +294,7 @@ function enterGameWithSelectedClass() {
 
 function goToClassSelect() {
   isPlayingActive = false;
+  isCatching = false;
   exitPointerLock();
   if (animId) cancelAnimationFrame(animId);
   document.getElementById('gameScreen').classList.add('hidden');
@@ -335,12 +338,12 @@ function initThreeEngine() {
   worldGroup = new THREE.Group();
   scene.add(worldGroup);
 
-  const ringGeo = new THREE.RingGeometry(0.95, 1.25, 32);
+  const ringGeo = new THREE.RingGeometry(1.05, 1.4, 32);
   const ringMat = new THREE.MeshBasicMaterial({
     color: 0xfef08a,
     side: THREE.DoubleSide,
     transparent: true,
-    opacity: 0.92
+    opacity: 0.95
   });
   targetRingMesh = new THREE.Mesh(ringGeo, ringMat);
   targetRingMesh.rotation.x = -Math.PI / 2;
@@ -860,7 +863,7 @@ function buildLeafGardenScene() {
 
   currentBounds = { minX: -34, maxX: 34, minZ: -34, maxZ: 34 };
   camera.position.set(0, PLAYER_HEIGHT, 24);
-  yaw = 0; pitch = -0.16;
+  yaw = 0; pitch = -0.14;
 
   const hemiLight = new THREE.HemisphereLight(0xfef9c3, 0x365314, 0.85);
   const dirLight = new THREE.DirectionalLight(0xfffbeb, 1.15);
@@ -907,29 +910,30 @@ function buildLeafGardenScene() {
 
 function createHiddenWormMesh() {
   const worm = new THREE.Group();
-  const bodyMat = new THREE.MeshStandardMaterial({ color: 0xa3e635, roughness: 0.5 });
-  const stripeMat = new THREE.MeshStandardMaterial({ color: 0x4d7c0f, roughness: 0.55 });
+  const bodyMat = new THREE.MeshStandardMaterial({ color: 0xa3e635, roughness: 0.45 });
+  const stripeMat = new THREE.MeshStandardMaterial({ color: 0x4d7c0f, roughness: 0.5 });
   const eyeWhite = new THREE.MeshBasicMaterial({ color: 0xffffff });
   const eyeBlack = new THREE.MeshBasicMaterial({ color: 0x0f172a });
 
   const segments = [];
   for (let i = 0; i < 5; i++) {
-    const radius = i === 0 ? 0.34 : 0.29 - i * 0.025;
+    const radius = i === 0 ? 0.36 : 0.31 - i * 0.025;
     const seg = new THREE.Mesh(
       new THREE.SphereGeometry(radius, 12, 10),
       i % 2 === 0 ? bodyMat : stripeMat
     );
+    // Đầu ở +Z (i = 0), thân kéo dài về phía -Z để khi quay yaw sẽ nhìn thẳng vào mặt người chơi
     seg.position.set(0, radius, -i * 0.38);
     worm.add(seg);
     segments.push(seg);
   }
 
   const head = segments[0];
-  [-0.13, 0.13].forEach(side => {
-    const ew = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 8), eyeWhite);
+  [-0.14, 0.14].forEach(side => {
+    const ew = new THREE.Mesh(new THREE.SphereGeometry(0.095, 8, 8), eyeWhite);
     ew.position.set(side, 0.1, 0.28);
-    const eb = new THREE.Mesh(new THREE.SphereGeometry(0.055, 8, 8), eyeBlack);
-    eb.position.set(side * 1.05, 0.11, 0.33);
+    const eb = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 8), eyeBlack);
+    eb.position.set(side * 1.05, 0.11, 0.34);
     head.add(ew, eb);
   });
 
@@ -950,11 +954,11 @@ function createLeafBush(hasWorm) {
       color: leafColors[i % leafColors.length],
       roughness: 0.72
     });
-    const leaf = new THREE.Mesh(new THREE.DodecahedronGeometry(0.75, 1), mat);
-    leaf.scale.set(1.35, 0.65, 1.05);
-    const bx = Math.cos(ang) * 0.72;
-    const bz = Math.sin(ang) * 0.72;
-    leaf.position.set(bx, 0.55, bz);
+    const leaf = new THREE.Mesh(new THREE.DodecahedronGeometry(0.85, 1), mat);
+    leaf.scale.set(1.4, 0.7, 1.1);
+    const bx = Math.cos(ang) * 0.78;
+    const bz = Math.sin(ang) * 0.78;
+    leaf.position.set(bx, 0.6, bz);
     leaf.rotation.y = -ang;
     leaf.castShadow = true;
     leaf.receiveShadow = true;
@@ -968,11 +972,11 @@ function createLeafBush(hasWorm) {
       color: leafColors[(j + 1) % leafColors.length],
       roughness: 0.68
     });
-    const leaf = new THREE.Mesh(new THREE.DodecahedronGeometry(0.68, 1), mat);
-    leaf.scale.set(1.2, 0.85, 1.2);
-    const bx = Math.cos(ang) * 0.34;
-    const bz = Math.sin(ang) * 0.34;
-    leaf.position.set(bx, 0.78, bz);
+    const leaf = new THREE.Mesh(new THREE.DodecahedronGeometry(0.75, 1), mat);
+    leaf.scale.set(1.25, 0.9, 1.25);
+    const bx = Math.cos(ang) * 0.38;
+    const bz = Math.sin(ang) * 0.38;
+    leaf.position.set(bx, 0.85, bz);
     leaf.castShadow = true;
     bushGroup.add(leaf);
     innerLeaves.push({ mesh: leaf, baseX: bx, baseZ: bz, dirX: Math.cos(ang), dirZ: Math.sin(ang) });
@@ -981,7 +985,7 @@ function createLeafBush(hasWorm) {
   let wormData = null;
   if (hasWorm) {
     wormData = createHiddenWormMesh();
-    wormData.wormMesh.position.set(0, 0.05, 0.25);
+    wormData.wormMesh.position.set(0, 0.1, 0);
     bushGroup.add(wormData.wormMesh);
   }
 
@@ -991,8 +995,9 @@ function createLeafBush(hasWorm) {
     wormData,
     outerLeaves,
     innerLeaves,
-    partStage: 0,
-    rustleTimer: 0
+    partStage: 0, // 0: nguyên bụi, 1: đã vạch lá ngoài, 2: đã vạch hết
+    rustleTimer: 0,
+    cleared: false
   };
 }
 
@@ -1002,8 +1007,8 @@ function spawnLeafBushesWithWorms(uncalledCount) {
 
   if (uncalledCount <= 0) return;
 
-  const wormBushCount = Math.min(uncalledCount, 14);
-  const emptyBushCount = Math.max(6, Math.floor(wormBushCount * 0.9));
+  const wormBushCount = Math.min(uncalledCount, 15);
+  const emptyBushCount = Math.max(5, Math.floor(wormBushCount * 0.6));
   const totalBushes = wormBushCount + emptyBushCount;
 
   let flags = [];
@@ -1015,12 +1020,13 @@ function spawnLeafBushesWithWorms(uncalledCount) {
   for (let i = 0; i < totalBushes; i++) {
     let bx = 0, bz = 0, attempts = 0;
     do {
-      bx = (Math.random() - 0.5) * 56;
-      bz = (Math.random() - 0.5) * 56;
+      bx = (Math.random() - 0.5) * 52;
+      bz = (Math.random() - 0.5) * 52;
       attempts++;
     } while (
-      attempts < 30 &&
-      (Math.hypot(bx - 0, bz - 24) < 5 || placedCoords.some(([px, pz]) => Math.hypot(bx - px, bz - pz) < 3.6))
+      attempts < 35 &&
+      (Math.hypot(bx - camera.position.x, bz - camera.position.z) < 4.5 ||
+        placedCoords.some(([px, pz]) => Math.hypot(bx - px, bz - pz) < 4.0))
     );
 
     placedCoords.push([bx, bz]);
@@ -1032,21 +1038,30 @@ function spawnLeafBushesWithWorms(uncalledCount) {
 }
 
 function findLeafBushInReach() {
-  const playerPos = camera.position.clone();
-  const forward = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+  const playerX = camera.position.x;
+  const playerZ = camera.position.z;
+  const forwardX = -Math.sin(yaw);
+  const forwardZ = -Math.cos(yaw);
 
   let hitIdx = -1;
-  let closestDist = 5.8;
+  let bestScore = Infinity;
 
   leafBushes3D.forEach((b, idx) => {
-    const toBush = new THREE.Vector3().subVectors(b.mesh.position, playerPos);
-    toBush.y = 0;
-    const dist = toBush.length();
-    if (dist < closestDist) {
-      toBush.normalize();
-      if (forward.dot(toBush) > 0.38) {
-        closestDist = dist;
-        hitIdx = idx;
+    if (b.cleared) return;
+    const dx = b.mesh.position.x - playerX;
+    const dz = b.mesh.position.z - playerZ;
+    const dist = Math.hypot(dx, dz);
+
+    if (dist > 0.4 && dist < 7.4) {
+      const dirX = dx / dist;
+      const dirZ = dz / dist;
+      const dot = forwardX * dirX + forwardZ * dirZ;
+      if (dot > 0.25) {
+        const score = dist * (1.4 - dot);
+        if (score < bestScore) {
+          bestScore = score;
+          hitIdx = idx;
+        }
       }
     }
   });
@@ -1054,7 +1069,16 @@ function findLeafBushInReach() {
 }
 
 function partLeavesAction() {
-  if (isSwinging || isCatching || leafBushes3D.length === 0) return;
+  if (isCatching || leafBushes3D.length === 0) return;
+
+  const students = allClasses[currentClass] || [];
+  const called = calledStudentsMap[currentClass] || [];
+  const uncalled = students.filter(s => !called.includes(s));
+  if (uncalled.length === 0) {
+    alert(`🎉 Đã gọi hết toàn bộ học sinh lớp ${currentClass}!`);
+    return;
+  }
+
   isSwinging = true;
   swingProgress = 0;
 
@@ -1072,9 +1096,9 @@ function partLeavesAction() {
   if (bush.partStage === 0) {
     bush.partStage = 1;
     bush.outerLeaves.forEach(l => {
-      l.mesh.position.x = l.baseX + l.dirX * 0.65;
-      l.mesh.position.z = l.baseZ + l.dirZ * 0.65;
-      l.mesh.position.y = 0.35;
+      l.mesh.position.x = l.baseX + l.dirX * 0.78;
+      l.mesh.position.z = l.baseZ + l.dirZ * 0.78;
+      l.mesh.position.y = 0.32;
     });
 
     banner.textContent = '🌿 Đã vạch lớp lá ngoài... Click lần nữa để vạch sâu vào trong!';
@@ -1082,19 +1106,22 @@ function partLeavesAction() {
     setTimeout(() => {
       if (currentGameMode === 'worm' && !isCatching) banner.classList.add('hidden');
     }, 1800);
-  } else {
+  } else if (bush.partStage === 1) {
     bush.partStage = 2;
     bush.innerLeaves.forEach(l => {
-      l.mesh.position.x = l.baseX + l.dirX * 0.85;
-      l.mesh.position.z = l.baseZ + l.dirZ * 0.85;
-      l.mesh.position.y = 0.25;
-      l.mesh.scale.set(0.85, 0.5, 0.85);
+      l.mesh.position.x = l.baseX + l.dirX * 0.95;
+      l.mesh.position.z = l.baseZ + l.dirZ * 0.95;
+      l.mesh.position.y = 0.22;
+      l.mesh.scale.set(0.8, 0.45, 0.8);
     });
 
     if (bush.hasWorm && bush.wormData) {
       bush.wormData.wormMesh.visible = true;
-      bush.wormData.wormMesh.position.y = 0.45;
-      bush.wormData.wormMesh.scale.set(1.35, 1.35, 1.35);
+      bush.wormData.wormMesh.position.y = 0.5;
+      bush.wormData.wormMesh.scale.set(1.45, 1.45, 1.45);
+      // Quay mặt (+Z của sâu) hướng thẳng về phía người chơi
+      bush.wormData.wormMesh.rotation.y = yaw;
+
       banner.textContent = '🐛 A! Bắt gặp chú sâu đang trốn trong bụi lá rồi!';
       banner.classList.remove('hidden');
       banner.classList.add('bite-alert');
@@ -1105,11 +1132,22 @@ function partLeavesAction() {
         triggerCatchStudent('worm');
       }, 450);
     } else {
-      banner.textContent = '🍃 Bụi lá này trống trơn, hãy tìm bụi lá khác nhé!';
+      bush.cleared = true;
+      banner.textContent = '🍃 Bụi lá này không có sâu, hãy tìm bụi lá khác nhé!';
       banner.classList.remove('hidden', 'bite-alert');
+
+      // Xóa hẳn bụi rỗng sau 0.35 giây để người chơi kịp thấy bên trong trống
+      setTimeout(() => {
+        worldGroup.remove(bush.mesh);
+        const idxToRemove = leafBushes3D.indexOf(bush);
+        if (idxToRemove !== -1) {
+          leafBushes3D.splice(idxToRemove, 1);
+        }
+      }, 350);
+
       setTimeout(() => {
         if (currentGameMode === 'worm' && !isCatching) banner.classList.add('hidden');
-      }, 1800);
+      }, 1700);
     }
   }
 }
@@ -1117,6 +1155,8 @@ function partLeavesAction() {
 // --- ĐIỀU KHIỂN CHUNG (WASD + CHUỘT) ---
 function startPlaying3D() {
   initAudio();
+  isCatching = false;
+  isSwinging = false;
   isPlayingActive = true;
   document.getElementById('lockOverlay').classList.add('hidden');
   onWindowResize();
@@ -1163,7 +1203,7 @@ function setupFPSControls() {
     if (code === 'KeyD' || code === 'ArrowRight') keys.d = true;
     if (code === 'Space') keys.space = true;
 
-    if (code === 'KeyE' && isPlayingActive) {
+    if (code === 'KeyE' && isPlayingActive && !isCatching) {
       performPrimaryAction();
     }
     if (code === 'Escape' && isPlayingActive) {
@@ -1189,15 +1229,15 @@ function setupFPSControls() {
     downX = e.clientX; downY = e.clientY;
     lastMouseX = e.clientX; lastMouseY = e.clientY;
 
-    if (isPointerLocked && isPlayingActive) {
+    if (isPointerLocked && isPlayingActive && !isCatching) {
       performPrimaryAction();
     }
   });
 
   window.addEventListener('mouseup', (e) => {
     if (e.button !== 0) return;
-    if (isDraggingMouse && !isPointerLocked && isPlayingActive) {
-      if (Math.hypot(e.clientX - downX, e.clientY - downY) < 6) {
+    if (isDraggingMouse && !isPointerLocked && isPlayingActive && !isCatching) {
+      if (Math.hypot(e.clientX - downX, e.clientY - downY) < 8) {
         performPrimaryAction();
       }
     }
@@ -1216,19 +1256,21 @@ function performPrimaryAction() {
 }
 
 function findDuckInReach() {
-  const playerPos = camera.position.clone();
-  const forward = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+  const playerX = camera.position.x;
+  const playerZ = camera.position.z;
+  const forwardX = -Math.sin(yaw);
+  const forwardZ = -Math.cos(yaw);
 
   let hitDuckIndex = -1;
-  let closestDist = 6.8;
+  let closestDist = 7.0;
 
   ducks3D.forEach((d, idx) => {
-    const toDuck = new THREE.Vector3().subVectors(d.mesh.position, playerPos);
-    toDuck.y = 0;
-    const dist = toDuck.length();
-    if (dist < closestDist) {
-      toDuck.normalize();
-      if (forward.dot(toDuck) > 0.35) {
+    const dx = d.mesh.position.x - playerX;
+    const dz = d.mesh.position.z - playerZ;
+    const dist = Math.hypot(dx, dz);
+    if (dist > 0.2 && dist < closestDist) {
+      const dot = forwardX * (dx / dist) + forwardZ * (dz / dist);
+      if (dot > 0.3) {
         closestDist = dist;
         hitDuckIndex = idx;
       }
@@ -1268,6 +1310,7 @@ function quickCatchRandom() {
 }
 
 function triggerCatchStudent(mode) {
+  if (isCatching) return;
   const chosenStudent = pickTrulyRandomStudent(currentClass);
   if (!chosenStudent) return;
 
@@ -1283,7 +1326,6 @@ function triggerCatchStudent(mode) {
     exitPointerLock();
     showResultModal(chosenStudent, mode);
 
-    isCatching = false;
     updateCountersAndEntities();
   }, 240);
 }
@@ -1340,7 +1382,7 @@ function updateTargetHighlight() {
     if (idx !== -1) {
       const b = leafBushes3D[idx];
       targetRingMesh.visible = true;
-      targetRingMesh.position.set(b.mesh.position.x, 0.04, b.mesh.position.z);
+      targetRingMesh.position.set(b.mesh.position.x, 0.05, b.mesh.position.z);
       targetRingMesh.rotation.z += 0.04;
       crosshair.classList.add('in-range');
       return;
@@ -1357,12 +1399,11 @@ function updateLeafBushesAnimation(dt) {
     if (b.rustleTimer > 0) {
       b.rustleTimer -= dt;
       b.mesh.rotation.z = Math.sin(performance.now() * 0.06) * 0.12;
+    } else if (!b.cleared && b.partStage < 2) {
+      // Tất cả bụi lá chưa vạch xong đều rung rinh giống hệt nhau
+      b.mesh.rotation.z = Math.sin(t + idx * 1.7) * 0.032;
     } else {
-      if (b.hasWorm && b.partStage < 2) {
-        b.mesh.rotation.z = Math.sin(t + idx * 1.7) * 0.028;
-      } else {
-        b.mesh.rotation.z = 0;
-      }
+      b.mesh.rotation.z = 0;
     }
 
     if (b.hasWorm && b.wormData && b.wormData.wormMesh.visible) {
@@ -1540,7 +1581,7 @@ function updateToolAnimation(dt) {
     }
   } else if (currentGameMode === 'worm' && stickGroup) {
     if (isSwinging) {
-      swingProgress += dt * 5.8;
+      swingProgress += dt * 6.5;
       if (swingProgress >= 1) { isSwinging = false; swingProgress = 0; }
       const c = Math.sin(swingProgress * Math.PI);
       stickGroup.position.set(0.62 - c * 0.55, -0.48 - c * 0.1, -0.95 - c * 0.4);
